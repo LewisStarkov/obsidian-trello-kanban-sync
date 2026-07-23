@@ -16,7 +16,6 @@ export class TrelloKanbanSyncSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		new Setting(containerEl).setName("Trello Kanban Sync").setHeading();
 		containerEl.createEl("p", {
 			text: this.plugin.settings.twoWaySyncEnabled
 				? "Two-way sync is on: a card's name, its lane, and whether it exists sync back to Trello. Everything else (due dates, labels, order) always reflects Trello's current values."

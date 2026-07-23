@@ -117,7 +117,7 @@ export class SyncEngine {
 			);
 			extraContentByCardId = result.extraContentByCardId;
 			if (result.log.length > 0 && settings.debugLogging) {
-				for (const line of result.log) console.log(`Trello Kanban Sync [${board.trelloBoardName}]: ${line}`);
+				for (const line of result.log) console.debug(`Trello Kanban Sync [${board.trelloBoardName}]: ${line}`);
 				new Notice(`Trello Kanban Sync: pushed changes for "${board.trelloBoardName}", see console.`, 5000);
 			}
 			if (result.mutated) {
