@@ -48,8 +48,12 @@ export function extractSettingsBlock(fileContent: string): KanbanSettingsBlock |
 
 	const jsonText = lines.slice(fenceStart + 1, fenceEnd).join("\n");
 	try {
-		const parsed = JSON.parse(jsonText);
-		if (parsed && typeof parsed === "object" && typeof parsed["kanban-plugin"] === "string") {
+		const parsed: unknown = JSON.parse(jsonText);
+		if (
+			parsed !== null &&
+			typeof parsed === "object" &&
+			typeof (parsed as Record<string, unknown>)["kanban-plugin"] === "string"
+		) {
 			return parsed as KanbanSettingsBlock;
 		}
 		return null;

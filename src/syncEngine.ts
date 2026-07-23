@@ -116,11 +116,9 @@ export class SyncEngine {
 				this.saveSettings
 			);
 			extraContentByCardId = result.extraContentByCardId;
-			if (result.log.length > 0) {
+			if (result.log.length > 0 && settings.debugLogging) {
 				for (const line of result.log) console.log(`Trello Kanban Sync [${board.trelloBoardName}]: ${line}`);
-				if (settings.debugLogging) {
-					new Notice(`Trello Kanban Sync: pushed changes for "${board.trelloBoardName}", see console.`, 5000);
-				}
+				new Notice(`Trello Kanban Sync: pushed changes for "${board.trelloBoardName}", see console.`, 5000);
 			}
 			if (result.mutated) {
 				[lists, cards] = await Promise.all([

@@ -120,8 +120,6 @@ export async function reconcileBoard(
 
 	const remoteListsById = new Map(remoteLists.map((l) => [l.id, l]));
 	const remoteCardsById = new Map(remoteCards.map((c) => [c.id, c]));
-	const baseListsById = new Map(base.lists.map((l) => [l.id, l]));
-	const baseCardsById = new Map(base.cards.map((c) => [c.id, c]));
 
 	const { localListsById, localCardsById, duplicateListIds, duplicateCardIds, newLanes, newCardsByLaneIndex } =
 		buildLocalIndexes(localLanes);

@@ -20,7 +20,7 @@ export default class TrelloKanbanSyncPlugin extends Plugin {
 		this.addSettingTab(new TrelloKanbanSyncSettingTab(this.app, this));
 
 		this.addCommand({
-			id: "trello-kanban-sync-now",
+			id: "sync-now",
 			name: "Sync now",
 			callback: async () => {
 				new Notice("Trello Kanban Sync: syncing...");
@@ -48,13 +48,16 @@ export default class TrelloKanbanSyncPlugin extends Plugin {
 		const ms = Math.max(1, this.settings.syncIntervalSeconds) * 1000;
 		this.intervalId = this.registerInterval(
 			window.setInterval(() => {
-				this.syncEngine.syncAll();
+				this.syncEngine.syncAll().catch((err: unknown) => {
+					console.error("Trello Kanban Sync: unexpected error during sync", err);
+				});
 			}, ms)
 		);
 	}
 
 	async loadSettings(): Promise<void> {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const loaded = (await this.loadData()) as Partial<TrelloKanbanSyncSettings> | null;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded ?? {});
 	}
 
 	async saveSettings(): Promise<void> {
