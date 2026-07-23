@@ -1,6 +1,6 @@
 {
 	"name": "trello-kanban-sync",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Mirrors Trello boards into native Obsidian Kanban-plugin boards, one-way, on an interval.",
 	"main": "main.js",
 	"scripts": {
