@@ -5,7 +5,7 @@ import {
 	updateCheckItem,
 	updateList,
 } from "./trelloClient";
-import { ParsedLane, TRELLO_LINE_MARKER_SUFFIX } from "./kanbanParser";
+import { ParsedCard, ParsedLane, TRELLO_LINE_MARKER_SUFFIX } from "./kanbanParser";
 import { BoardSnapshot, BoardSyncConfig, PendingCreate, TrelloCard, TrelloList } from "./types";
 
 // Defense in depth on top of the "ambiguity never resolves to archive" rule:
@@ -41,7 +41,7 @@ function buildLocalIndexes(localLanes: ParsedLane[]) {
 	const duplicateListIds = new Set<string>();
 	const duplicateCardIds = new Set<string>();
 	const newLanes: { name: string; laneIndex: number }[] = [];
-	const newCardsByLaneIndex = new Map<number, { name: string }[]>();
+	const newCardsByLaneIndex = new Map<number, ParsedCard[]>();
 
 	localLanes.forEach((lane, laneIndex) => {
 		if (lane.listId) {
@@ -60,9 +60,15 @@ function buildLocalIndexes(localLanes: ParsedLane[]) {
 				// skipped (via optedOut), which is the actual opt-out contract.
 				if (localCardsById.has(card.cardId)) duplicateCardIds.add(card.cardId);
 				localCardsById.set(card.cardId, { name: card.name, idList: lane.listId, optedOut: card.hasExtraContent });
-			} else if (!card.hasExtraContent) {
+			} else {
+				// A brand new card (no id yet) still gets created even if it has
+				// extra body content (e.g. a line break under the title), the
+				// opt-out only applies to pushing further edits once the card
+				// exists, never to creating it in the first place, an unindented
+				// title is all createCard() needs, its extra lines get carried
+				// over separately below once the new id is known.
 				const bucket = newCardsByLaneIndex.get(laneIndex) ?? [];
-				bucket.push({ name: card.name });
+				bucket.push(card);
 				newCardsByLaneIndex.set(laneIndex, bucket);
 			}
 		}
@@ -88,16 +94,20 @@ function buildLocalCheckItemStates(localLanes: ParsedLane[], duplicateCardIds: S
 	return states;
 }
 
+// Trello-owned lines (description/checklist) are dropped here, they're
+// regenerated fresh from the remote card every cycle in kanbanWriter,
+// preserving a stale copy would let deleted Trello content linger forever
+// once it stops being present in a fresh render.
+function userLinesOf(card: ParsedCard): string[] {
+	return card.rawLines.slice(1).filter((line) => !TRELLO_LINE_MARKER_SUFFIX.test(line.trim()));
+}
+
 export function extraContentMap(localLanes: ParsedLane[]): Map<string, string[]> {
 	const map = new Map<string, string[]>();
 	for (const lane of localLanes) {
 		for (const card of lane.cards) {
 			if (!card.cardId) continue;
-			// Trello-owned lines (description/checklist) are dropped here, they're
-			// regenerated fresh from the remote card every cycle in kanbanWriter,
-			// preserving a stale copy would let deleted Trello content linger
-			// forever once it stops being present in a fresh render.
-			const userLines = card.rawLines.slice(1).filter((line) => !TRELLO_LINE_MARKER_SUFFIX.test(line.trim()));
+			const userLines = userLinesOf(card);
 			if (userLines.length > 0) {
 				map.set(card.cardId, userLines);
 			}
@@ -151,6 +161,12 @@ export async function reconcileBoard(
 
 	const { localListsById, localCardsById, duplicateListIds, duplicateCardIds, newLanes, newCardsByLaneIndex } =
 		buildLocalIndexes(localLanes);
+	// Built once here (rather than at the end) so the "new cards" section below
+	// can add an entry for a just-created card under its brand new id, letting
+	// its hand-typed extra lines survive the transition from "just text in the
+	// file" to "a real Trello card" instead of being dropped on the cycle it's
+	// created.
+	const extraContentByCardId = extraContentMap(localLanes);
 
 	if (duplicateListIds.size > 0 || duplicateCardIds.size > 0) {
 		messages.push(
@@ -363,9 +379,13 @@ export async function reconcileBoard(
 		}
 		for (const card of cards) {
 			try {
-				await findOrCreatePendingCard(ctx, pendingCardCreates, card.name, idList);
+				const newId = await findOrCreatePendingCard(ctx, pendingCardCreates, card.name, idList);
 				mutated = true;
 				messages.push(`Created Trello card "${card.name}".`);
+				if (card.hasExtraContent) {
+					const userLines = userLinesOf(card);
+					if (userLines.length > 0) extraContentByCardId.set(newId, userLines);
+				}
 			} catch (err) {
 				messages.push(`Failed to create card "${card.name}": ${err}`);
 			}
@@ -373,7 +393,7 @@ export async function reconcileBoard(
 	}
 	board.pendingCardCreates = pendingCardCreates;
 
-	return { mutated, extraContentByCardId: extraContentMap(localLanes), log: messages };
+	return { mutated, extraContentByCardId, log: messages };
 }
 
 export function snapshotFromRemote(lists: TrelloList[], cards: TrelloCard[]): BoardSnapshot {
