@@ -8,12 +8,13 @@ sync, unless you turn on two-way sync (see below).
 
 ## Setup
 
-1. Get an API key at https://trello.com/app-key, then generate a token via
-   the link on that same page.
-2. In Obsidian: Settings → Trello Kanban Sync → paste in your API key and
-   token.
-3. Click "Fetch my boards", then toggle on the boards you want synced.
-4. Each enabled board is written to `Trello/<Board Name>.md` (configurable)
+1. Go to https://trello.com/power-ups/admin/ and create your own app.
+2. Copy the API key and paste it into the "Trello API key" field, then click
+   "Open authorization page".
+3. Grant access, then copy the token shown on that page.
+4. Paste the token into the "Trello API token" field.
+5. Click "Fetch my boards", then toggle on the boards you want synced.
+6. Each enabled board is written to `Trello/<Board Name>.md` (configurable)
    on the configured interval (default every 5 seconds), or immediately via
    the "Sync now" command.
 
@@ -48,10 +49,8 @@ npm run dev     # esbuild watch, rebuilds main.js on save
 npm run build    # type-check + production bundle
 ```
 
-No hot-reload plugin is required, but changes to `main.js` aren't picked up
-automatically, toggle the plugin off/on in Settings → Community Plugins, or
-reload Obsidian (Cmd/Ctrl+R), to load a rebuilt bundle. Use the "Sync now"
-command to test a sync pass immediately instead of waiting on the interval.
+Use the "Sync now" command to test a sync pass immediately instead of waiting
+on the interval.
 
 ## Notes
 
