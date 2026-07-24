@@ -150,6 +150,9 @@ export class SyncEngine {
 				renderDueDates: settings.renderDueDates,
 				renderLabelsAsTags: settings.renderLabelsAsTags,
 				renderCardLinks: settings.renderCardLinks,
+				renderMembers: settings.renderMembers,
+				renderDescription: settings.renderDescription,
+				renderChecklists: settings.renderChecklists,
 			},
 			extraContentByCardId
 		);

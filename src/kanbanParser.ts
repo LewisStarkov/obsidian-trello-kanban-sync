@@ -74,11 +74,17 @@ export function hasConflictMarkers(fileContent: string): boolean {
 	return fileContent.split("\n").some((line) => CONFLICT_MARKERS.some((marker) => line.trim().startsWith(marker)));
 }
 
+export interface ParsedCheckItem {
+	id: string;
+	checked: boolean;
+}
+
 export interface ParsedCard {
 	cardId: string | null;
 	name: string;
 	hasExtraContent: boolean;
 	rawLines: string[];
+	checkItems: ParsedCheckItem[];
 }
 
 export interface ParsedLane {
@@ -91,8 +97,25 @@ const LID_SUFFIX = /\s*%%lid:([A-Za-z0-9_-]+)%%\s*$/;
 const TID_SUFFIX = /\s*%%tid:([A-Za-z0-9_-]+)%%\s*$/;
 const CARD_LINK_SUFFIX = /\s*\[↗\]\(https:\/\/trello\.com\/c\/[A-Za-z0-9]+\)\s*$/;
 const TAG_SUFFIX = /\s*#[^\s#]+\s*$/;
+const MEMBER_SUFFIX = /\s*@[^\s@]+\s*$/;
 const DUE_SUFFIX = /\s*@\{[^}]*\}\s*$/;
 const CHECKBOX_LINE = /^-\s*\[[ xX]\]\s*(.*)$/;
+
+// Appended to every description/checklist line the plugin itself renders
+// under a card, so a rendered-from-Trello body line can be told apart from a
+// line the user typed by hand, see the extra-content branch in
+// parseBoardMarkdown below. Trello-owned lines never opt a card out of
+// two-way sync (they're regenerated fresh every cycle anyway, never a stale
+// value to accidentally push); hand-typed lines still do. A checklist item's
+// marker additionally carries its Trello checkItem id (":ciid:<id>"), so its
+// checked state can be pushed back to Trello, that's the one part of
+// Trello-owned content that's genuinely two-way, see reconcileBoard.
+export const TRELLO_LINE_MARKER = "%%trello%%";
+export function trelloChecklistItemMarker(checkItemId: string): string {
+	return `%%trello:ciid:${checkItemId}%%`;
+}
+export const TRELLO_LINE_MARKER_SUFFIX = /\s*%%trello(?::ciid:([A-Za-z0-9_-]+))?%%\s*$/;
+const INDENTED_CHECKBOX_PREFIX = /^-\s*\[([ xX])\]/;
 
 function stripCardSuffixes(rawText: string): { name: string; cardId: string | null } {
 	let text = rawText;
@@ -107,6 +130,15 @@ function stripCardSuffixes(rawText: string): { name: string; cardId: string | nu
 	const linkMatch = text.match(CARD_LINK_SUFFIX);
 	if (linkMatch) {
 		text = text.slice(0, linkMatch.index).trimEnd();
+	}
+
+	// Members are emitted as zero or more trailing "@username" tokens, strip
+	// repeatedly, before tags/due so a due date's "@{...}" token (stripped
+	// last, see below) is never mistaken for a member token.
+	let memberMatch = text.match(MEMBER_SUFFIX);
+	while (memberMatch) {
+		text = text.slice(0, memberMatch.index).trimEnd();
+		memberMatch = text.match(MEMBER_SUFFIX);
 	}
 
 	// Tags are emitted as zero or more trailing "#tag" tokens, strip repeatedly.
@@ -171,19 +203,39 @@ export function parseBoardMarkdown(fileContent: string): ParsedLane[] {
 			continue;
 		}
 
-		const checkboxMatch = trimmed.match(CHECKBOX_LINE);
+		// Only an unindented line can start a new card, an indented line that
+		// happens to look like a checkbox (e.g. a rendered checklist item, or
+		// any user-typed nested checkbox) belongs to the card above it instead,
+		// see the extra-content branch below. Without this, such a line would
+		// be misread as a new sibling card and two-way sync would try to create
+		// a real Trello card out of it.
+		const isIndented = /^\s/.test(line);
+		const checkboxMatch = !isIndented ? trimmed.match(CHECKBOX_LINE) : null;
 		if (checkboxMatch && currentLane) {
 			const { name, cardId } = stripCardSuffixes(checkboxMatch[1]);
-			currentCard = { cardId, name, hasExtraContent: false, rawLines: [line] };
+			currentCard = { cardId, name, hasExtraContent: false, rawLines: [line], checkItems: [] };
 			currentLane.cards.push(currentCard);
 			continue;
 		}
 
 		// A non-empty, indented line right after a card belongs to that card as
-		// extra body content (Kanban supports multi-line cards), such cards are
-		// opted out of two-way sync entirely rather than risk mangling free text.
-		if (currentCard && trimmed.length > 0 && /^\s/.test(line)) {
-			currentCard.hasExtraContent = true;
+		// extra body content (Kanban supports multi-line cards). A line the
+		// plugin itself rendered from a Trello description/checklist (tagged
+		// with TRELLO_LINE_MARKER) is exempt from the opt-out below, only a
+		// hand-typed line still opts the card out of two-way sync entirely,
+		// rather than risk mangling free text. A checklist item line also
+		// carries its checkItem id, extracted so its checked state can be
+		// diffed against Trello, see reconcileBoard.
+		if (currentCard && trimmed.length > 0 && isIndented) {
+			const markerMatch = trimmed.match(TRELLO_LINE_MARKER_SUFFIX);
+			if (!markerMatch) {
+				currentCard.hasExtraContent = true;
+			} else if (markerMatch[1]) {
+				const itemCheckboxMatch = trimmed.match(INDENTED_CHECKBOX_PREFIX);
+				if (itemCheckboxMatch) {
+					currentCard.checkItems.push({ id: markerMatch[1], checked: itemCheckboxMatch[1] !== " " });
+				}
+			}
 			currentCard.rawLines.push(line);
 			continue;
 		}

@@ -67,7 +67,14 @@ export async function fetchBoardLists(boardId: string, apiKey: string, apiToken:
 export async function fetchBoardCards(boardId: string, apiKey: string, apiToken: string): Promise<TrelloCard[]> {
 	return trelloGet<TrelloCard[]>(
 		`/boards/${boardId}/cards`,
-		{ fields: "name,id,closed,idList,due,labels,pos,shortLink", filter: "open" },
+		{
+			fields: "name,id,closed,idList,due,dueComplete,desc,labels,pos,shortLink",
+			filter: "open",
+			members: "true",
+			member_fields: "fullName,username",
+			checklists: "all",
+			checklist_fields: "name",
+		},
 		apiKey,
 		apiToken
 	);
@@ -115,4 +122,20 @@ export async function updateList(
 	if (fields.name !== undefined) params.name = fields.name;
 	if (fields.closed !== undefined) params.closed = String(fields.closed);
 	return trelloWrite<{ id: string }>("PUT", `/lists/${listId}`, params, apiKey, apiToken);
+}
+
+export async function updateCheckItem(
+	cardId: string,
+	checkItemId: string,
+	state: "complete" | "incomplete",
+	apiKey: string,
+	apiToken: string
+): Promise<{ id: string }> {
+	return trelloWrite<{ id: string }>(
+		"PUT",
+		`/cards/${cardId}/checkItem/${checkItemId}`,
+		{ state },
+		apiKey,
+		apiToken
+	);
 }

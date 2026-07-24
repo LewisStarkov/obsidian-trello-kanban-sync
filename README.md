@@ -18,13 +18,28 @@ sync, unless you turn on two-way sync (see below).
    on the configured interval (default every 5 seconds), or immediately via
    the "Sync now" command.
 
+Each card can also render its due-complete state (checkbox is ticked once a
+card's due date is marked complete on Trello), its labels, and a link back to
+the Trello card, all on by default. Three more fields are available as
+opt-in toggles in settings:
+
+- **Members** — on by default, shown as `@username` tags on the card line.
+- **Description** and **Checklists** — off by default. Both render as
+  indented text/checkboxes under the card, refreshed every sync. These lines
+  are tagged internally as Trello-owned, so by themselves they never opt a
+  card out of two-way sync's name/lane push (see below) and never overwrite
+  anything you've typed by hand under the same card, that still works and is
+  preserved exactly as before.
+
 ## Two-way sync (experimental, off by default)
 
 Turn on "Two-way sync" in settings to push edits made directly in Obsidian's
-Kanban view back to Trello. Only three things ever sync Obsidian → Trello: a
-card's **name**, which **lane** it's in, and whether it **exists** (creating
-or archiving). Everything else (due dates, labels, card order, lane order)
-always stays one-way, reflecting Trello's current values.
+Kanban view back to Trello. Only four things ever sync Obsidian → Trello: a
+card's **name**, which **lane** it's in, whether it **exists** (creating or
+archiving), and — only if "Render checklists" is also on — a checklist
+item's **checked state**. Everything else (due dates, labels, card/checklist
+order, lane order, a checklist item's own text) always stays one-way,
+reflecting Trello's current values.
 
 How it works, briefly: every card and lane gets a hidden `%%tid:...%%` /
 `%%lid:...%%` marker (invisible in the Kanban board view) so the plugin can
@@ -34,9 +49,17 @@ state, so a partner's concurrent edit on Trello.com always wins over a stale
 local edit rather than silently clobbering it. Cards/lists are only ever
 archived (never hard-deleted) and only when it's unambiguous that they were
 actually removed locally, anything uncertain is left alone and logged rather
-than guessed at. A card with extra indented lines under it (Kanban supports
-multi-line card bodies) is automatically excluded from two-way sync so your
-notes are never mistaken for something to push to Trello.
+than guessed at. On top of that, a card/list has to come up missing from the
+local file on two consecutive sync cycles before it's archived, a one-off
+misread (e.g. something else briefly touching the file, like another Obsidian
+Sync device or a git pull) doesn't get to archive anything by itself, it's
+just noted and re-checked next cycle. A card with extra indented lines under it that you typed by
+hand (Kanban supports multi-line card bodies) is automatically excluded from
+two-way sync's name/lane push so your notes are never mistaken for something
+to push to Trello, the card itself still exists and stays untouched, it's
+only the push that's skipped. The indented lines the plugin renders itself
+(a Trello description/checklist) don't count towards this, only your own
+hand-typed lines do.
 
 Turning two-way sync back off at any time is safe, the board just reverts to
 today's plain one-way behavior, no cleanup needed.

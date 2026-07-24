@@ -1,7 +1,7 @@
 {
 	"id": "trello-kanban-sync",
 	"name": "Trello Kanban Sync",
-	"version": "0.1.4",
+	"version": "0.1.5",
 	"minAppVersion": "1.4.11",
 	"description": "Mirrors Trello boards into native Kanban-plugin boards on an interval, with optional two-way sync.",
 	"author": "Lewis Starkov",

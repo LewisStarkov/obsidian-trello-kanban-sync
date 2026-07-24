@@ -16,13 +16,35 @@ export interface TrelloLabel {
 	color: string;
 }
 
+export interface TrelloMember {
+	id: string;
+	fullName: string;
+	username: string;
+}
+
+export interface TrelloChecklistItem {
+	id: string;
+	name: string;
+	state: "complete" | "incomplete";
+}
+
+export interface TrelloChecklist {
+	id: string;
+	name: string;
+	checkItems: TrelloChecklistItem[];
+}
+
 export interface TrelloCard {
 	id: string;
 	name: string;
 	closed: boolean;
 	idList: string;
 	due: string | null;
+	dueComplete: boolean;
+	desc: string;
 	labels: TrelloLabel[];
+	members: TrelloMember[];
+	checklists: TrelloChecklist[];
 	pos: number;
 	shortLink: string;
 }
@@ -40,12 +62,19 @@ export interface BoardSnapshotCard {
 	closed: boolean;
 }
 
+export interface BoardSnapshotCheckItem {
+	id: string;
+	cardId: string;
+	state: "complete" | "incomplete";
+}
+
 // "base" for the local/remote 3-way merge, Trello's state as of the last
 // completed two-way sync cycle. Overwritten wholesale each cycle, never
 // appended to, so it stays small and self-healing.
 export interface BoardSnapshot {
 	lists: BoardSnapshotList[];
 	cards: BoardSnapshotCard[];
+	checkItems: BoardSnapshotCheckItem[];
 }
 
 // Tracks a create (POST) call that succeeded but whose resulting id hasn't
@@ -67,6 +96,13 @@ export interface BoardSyncConfig {
 	baseSnapshot?: BoardSnapshot;
 	pendingCardCreates?: PendingCreate[];
 	pendingListCreates?: PendingCreate[];
+	// Ids found "missing locally" (candidate for archiving on Trello) as of the
+	// last reconcile cycle. A card/list is only actually archived once it's
+	// been missing for two consecutive cycles, so a one-off bad read of the
+	// local file (a race with something else touching it) can't archive
+	// anything by itself, it just gets recorded here and re-checked next time.
+	pendingArchiveCardIds?: string[];
+	pendingArchiveListIds?: string[];
 }
 
 export type OrphanedCardBehavior = "drop" | "archive-lane";
@@ -81,6 +117,9 @@ export interface TrelloKanbanSyncSettings {
 	renderDueDates: boolean;
 	renderLabelsAsTags: boolean;
 	renderCardLinks: boolean;
+	renderMembers: boolean;
+	renderDescription: boolean;
+	renderChecklists: boolean;
 	orphanedCardBehavior: OrphanedCardBehavior;
 	twoWaySyncEnabled: boolean;
 	debugLogging: boolean;
@@ -97,6 +136,9 @@ export const DEFAULT_SETTINGS: TrelloKanbanSyncSettings = {
 	renderDueDates: true,
 	renderLabelsAsTags: true,
 	renderCardLinks: true,
+	renderMembers: true,
+	renderDescription: false,
+	renderChecklists: false,
 	orphanedCardBehavior: "archive-lane",
 	twoWaySyncEnabled: false,
 	debugLogging: false,

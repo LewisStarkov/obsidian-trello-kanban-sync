@@ -157,6 +157,40 @@ export class TrelloKanbanSyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName("Render members")
+			.setDesc("Show a card's Trello members as @tags.")
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.renderMembers).onChange(async (value) => {
+					this.plugin.settings.renderMembers = value;
+					await this.plugin.saveSettings();
+				})
+			);
+
+		new Setting(containerEl)
+			.setName("Render description")
+			.setDesc(
+				"Show a card's Trello description under it, kept in sync automatically. Safe to combine with two-way sync: it never causes that card's name/lane push to be skipped by itself. Manually typing your own notes under the same card still opts that card out of the push, same as always."
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.renderDescription).onChange(async (value) => {
+					this.plugin.settings.renderDescription = value;
+					await this.plugin.saveSettings();
+				})
+			);
+
+		new Setting(containerEl)
+			.setName("Render checklists")
+			.setDesc(
+				"Show a card's Trello checklists as nested checkboxes under it, kept in sync automatically. Safe to combine with two-way sync: it never causes that card's name/lane push to be skipped by itself. Checking/unchecking an item here also pushes that completion state to Trello (this is the one exception to \"only name/lane/exists push\"), the item's own text stays one-way. Manually typing your own notes under the same card still opts that card out of the name/lane push, same as always."
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.renderChecklists).onChange(async (value) => {
+					this.plugin.settings.renderChecklists = value;
+					await this.plugin.saveSettings();
+				})
+			);
+
+		new Setting(containerEl)
 			.setName("Cards whose list was archived")
 			.setDesc(
 				"Trello can leave a card 'open' even after its list is archived. Choose whether those cards are dropped or collected into an Archived lane."

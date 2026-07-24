@@ -2,9 +2,10 @@ import {
 	createCard,
 	createList,
 	updateCard,
+	updateCheckItem,
 	updateList,
 } from "./trelloClient";
-import { ParsedLane } from "./kanbanParser";
+import { ParsedLane, TRELLO_LINE_MARKER_SUFFIX } from "./kanbanParser";
 import { BoardSnapshot, BoardSyncConfig, PendingCreate, TrelloCard, TrelloList } from "./types";
 
 // Defense in depth on top of the "ambiguity never resolves to archive" rule:
@@ -36,7 +37,7 @@ interface Ctx {
 
 function buildLocalIndexes(localLanes: ParsedLane[]) {
 	const localListsById = new Map<string, { name: string }>();
-	const localCardsById = new Map<string, { name: string; idList: string | null }>();
+	const localCardsById = new Map<string, { name: string; idList: string | null; optedOut: boolean }>();
 	const duplicateListIds = new Set<string>();
 	const duplicateCardIds = new Set<string>();
 	const newLanes: { name: string; laneIndex: number }[] = [];
@@ -51,11 +52,15 @@ function buildLocalIndexes(localLanes: ParsedLane[]) {
 		}
 
 		for (const card of lane.cards) {
-			if (card.hasExtraContent) continue; // opted out of two-way sync entirely
 			if (card.cardId) {
+				// A card with extra body content (manual notes, or a rendered Trello
+				// description/checklist) still counts as existing here, its
+				// existence must never be mistaken for "removed locally" and
+				// archived below in reconcileBoard, only its name/lane push is
+				// skipped (via optedOut), which is the actual opt-out contract.
 				if (localCardsById.has(card.cardId)) duplicateCardIds.add(card.cardId);
-				localCardsById.set(card.cardId, { name: card.name, idList: lane.listId });
-			} else {
+				localCardsById.set(card.cardId, { name: card.name, idList: lane.listId, optedOut: card.hasExtraContent });
+			} else if (!card.hasExtraContent) {
 				const bucket = newCardsByLaneIndex.get(laneIndex) ?? [];
 				bucket.push({ name: card.name });
 				newCardsByLaneIndex.set(laneIndex, bucket);
@@ -66,12 +71,35 @@ function buildLocalIndexes(localLanes: ParsedLane[]) {
 	return { localListsById, localCardsById, duplicateListIds, duplicateCardIds, newLanes, newCardsByLaneIndex };
 }
 
+function buildLocalCheckItemStates(localLanes: ParsedLane[], duplicateCardIds: Set<string>): Map<string, boolean> {
+	const states = new Map<string, boolean>();
+	for (const lane of localLanes) {
+		for (const card of lane.cards) {
+			// A card with a duplicated %%tid%% marker has ambiguous local state
+			// (see the "freezing pushes" message below), its checklist items
+			// inherit that same freeze rather than picking whichever duplicate
+			// occurrence happens to be read last.
+			if (card.cardId && duplicateCardIds.has(card.cardId)) continue;
+			for (const item of card.checkItems) {
+				states.set(item.id, item.checked);
+			}
+		}
+	}
+	return states;
+}
+
 export function extraContentMap(localLanes: ParsedLane[]): Map<string, string[]> {
 	const map = new Map<string, string[]>();
 	for (const lane of localLanes) {
 		for (const card of lane.cards) {
-			if (card.hasExtraContent && card.cardId) {
-				map.set(card.cardId, card.rawLines.slice(1));
+			if (!card.cardId) continue;
+			// Trello-owned lines (description/checklist) are dropped here, they're
+			// regenerated fresh from the remote card every cycle in kanbanWriter,
+			// preserving a stale copy would let deleted Trello content linger
+			// forever once it stops being present in a fresh render.
+			const userLines = card.rawLines.slice(1).filter((line) => !TRELLO_LINE_MARKER_SUFFIX.test(line.trim()));
+			if (userLines.length > 0) {
+				map.set(card.cardId, userLines);
 			}
 		}
 	}
@@ -147,6 +175,8 @@ export async function reconcileBoard(
 	let archivesThisCycle = 0;
 
 	// ---- Lists: rename / archive ----
+	const missingListIds: string[] = [];
+	const previouslyMissingListIds = new Set(board.pendingArchiveListIds ?? []);
 	for (const baseList of base.lists) {
 		if (duplicateListIds.has(baseList.id)) continue;
 		const remoteList = remoteListsById.get(baseList.id);
@@ -154,6 +184,13 @@ export async function reconcileBoard(
 
 		const localList = localListsById.get(baseList.id);
 		if (!localList) {
+			missingListIds.push(baseList.id);
+			if (!previouslyMissingListIds.has(baseList.id)) {
+				// First cycle it's been seen missing, don't act yet, see
+				// pendingArchiveListIds on BoardSyncConfig for why.
+				messages.push(`Lane "${remoteList.name}" missing locally, will archive on Trello next cycle if it's still missing.`);
+				continue;
+			}
 			if (abstainFromArchiving || archivesThisCycle >= MAX_ARCHIVES_PER_CYCLE) continue;
 			// Only archive the list if ALL of its base-known cards are also gone
 			// from the local file entirely (not just moved to another lane,
@@ -167,7 +204,7 @@ export async function reconcileBoard(
 				await updateList(baseList.id, { closed: true }, apiKey, apiToken);
 				archivesThisCycle++;
 				mutated = true;
-				messages.push(`Archived Trello list "${remoteList.name}" (removed locally).`);
+				messages.push(`Archived Trello list "${remoteList.name}" (missing locally for two consecutive cycles).`);
 			} catch (err) {
 				messages.push(`Failed to archive list "${remoteList.name}": ${err}`);
 			}
@@ -188,8 +225,11 @@ export async function reconcileBoard(
 			messages.push(`List rename conflict on "${baseList.name}", keeping Trello's "${remoteList.name}".`);
 		}
 	}
+	board.pendingArchiveListIds = missingListIds;
 
 	// ---- Cards: rename / move / archive ----
+	const missingCardIds: string[] = [];
+	const previouslyMissingCardIds = new Set(board.pendingArchiveCardIds ?? []);
 	for (const baseCard of base.cards) {
 		if (duplicateCardIds.has(baseCard.id)) continue;
 		const remoteCard = remoteCardsById.get(baseCard.id);
@@ -197,17 +237,25 @@ export async function reconcileBoard(
 
 		const localCard = localCardsById.get(baseCard.id);
 		if (!localCard) {
+			missingCardIds.push(baseCard.id);
+			if (!previouslyMissingCardIds.has(baseCard.id)) {
+				// First cycle it's been seen missing, don't act yet, see
+				// pendingArchiveCardIds on BoardSyncConfig for why.
+				messages.push(`Card "${baseCard.name}" missing locally, will archive on Trello next cycle if it's still missing.`);
+				continue;
+			}
 			if (abstainFromArchiving || archivesThisCycle >= MAX_ARCHIVES_PER_CYCLE) continue;
 			try {
 				await updateCard(baseCard.id, { closed: true }, apiKey, apiToken);
 				archivesThisCycle++;
 				mutated = true;
-				messages.push(`Archived Trello card "${baseCard.name}" (removed locally).`);
+				messages.push(`Archived Trello card "${baseCard.name}" (missing locally for two consecutive cycles).`);
 			} catch (err) {
 				messages.push(`Failed to archive card "${baseCard.name}": ${err}`);
 			}
 			continue;
 		}
+		if (localCard.optedOut) continue; // extra body content present, name/lane push skipped, existence already preserved above
 
 		const localNameChanged = localCard.name !== baseCard.name;
 		const remoteNameChanged = remoteCard.name !== baseCard.name;
@@ -236,6 +284,51 @@ export async function reconcileBoard(
 			} catch (err) {
 				messages.push(`Failed to update card "${baseCard.name}": ${err}`);
 			}
+		}
+	}
+	board.pendingArchiveCardIds = missingCardIds;
+
+	// ---- Checklist items: push completion state ----
+	// The one exception to "only name/lane/exists ever push", a checklist
+	// item's own text/existence stays one-way (regenerated fresh every cycle,
+	// see renderCardBody), only its checked state is genuinely two-way. No
+	// "missing locally" debounce needed here unlike archiving above, an item
+	// with no local opinion (toggle off, or a one-off bad read) is simply
+	// skipped this cycle, never mistaken for "delete this", so there's nothing
+	// destructive a transient misread could do.
+	const remoteCheckItemsById = new Map<string, { state: "complete" | "incomplete"; cardId: string }>();
+	for (const remoteCard of remoteCards) {
+		for (const checklist of remoteCard.checklists) {
+			for (const item of checklist.checkItems) {
+				remoteCheckItemsById.set(item.id, { state: item.state, cardId: remoteCard.id });
+			}
+		}
+	}
+	const localCheckItemStates = buildLocalCheckItemStates(localLanes, duplicateCardIds);
+	for (const baseItem of base.checkItems ?? []) {
+		const remoteItem = remoteCheckItemsById.get(baseItem.id);
+		if (!remoteItem) continue; // checklist item deleted/renamed away on Trello, plain pull handles it
+
+		const localChecked = localCheckItemStates.get(baseItem.id);
+		if (localChecked === undefined) continue; // no local opinion this cycle, nothing to push
+
+		const baseChecked = baseItem.state === "complete";
+		const remoteChecked = remoteItem.state === "complete";
+		if (localChecked === baseChecked) continue; // unchanged locally
+
+		if (remoteChecked !== baseChecked && remoteChecked !== localChecked) {
+			const cardName = remoteCardsById.get(remoteItem.cardId)?.name ?? remoteItem.cardId;
+			messages.push(`Checklist item conflict on card "${cardName}", keeping Trello's state.`);
+			continue;
+		}
+
+		try {
+			await updateCheckItem(remoteItem.cardId, baseItem.id, localChecked ? "complete" : "incomplete", apiKey, apiToken);
+			mutated = true;
+			const cardName = remoteCardsById.get(remoteItem.cardId)?.name ?? remoteItem.cardId;
+			messages.push(`Updated checklist item completion on card "${cardName}".`);
+		} catch (err) {
+			messages.push(`Failed to update checklist item completion: ${err}`);
 		}
 	}
 
@@ -287,5 +380,8 @@ export function snapshotFromRemote(lists: TrelloList[], cards: TrelloCard[]): Bo
 	return {
 		lists: lists.map((l) => ({ id: l.id, name: l.name, closed: l.closed })),
 		cards: cards.map((c) => ({ id: c.id, name: c.name, idList: c.idList, closed: c.closed })),
+		checkItems: cards.flatMap((c) =>
+			c.checklists.flatMap((cl) => cl.checkItems.map((ci) => ({ id: ci.id, cardId: c.id, state: ci.state })))
+		),
 	};
 }

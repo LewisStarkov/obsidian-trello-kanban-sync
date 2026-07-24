@@ -1,5 +1,6 @@
 import { KanbanSettingsBlock, OrphanedCardBehavior, TrelloCard, TrelloLabel, TrelloList } from "./types";
 import { slugifyTag } from "./util/filenames";
+import { TRELLO_LINE_MARKER, trelloChecklistItemMarker } from "./kanbanParser";
 
 export interface Lane {
 	listId: string;
@@ -100,13 +101,20 @@ function labelsToTags(labels: TrelloLabel[]): string[] {
 }
 
 function renderCardLine(card: TrelloCard, opts: RenderOptions): string {
-	let line = `- [ ] ${card.name}`;
+	const checked = opts.renderDueDates && card.due && card.dueComplete ? "x" : " ";
+	let line = `- [${checked}] ${card.name}`;
 	if (opts.renderDueDates && card.due) {
 		line += ` @{${formatDue(card.due)}}`;
 	}
 	if (opts.renderLabelsAsTags && card.labels.length > 0) {
 		for (const tag of labelsToTags(card.labels)) {
 			line += ` #${tag}`;
+		}
+	}
+	if (opts.renderMembers && card.members.length > 0) {
+		for (const member of card.members) {
+			const handle = member.username || member.fullName.replace(/\s+/g, "");
+			if (handle) line += ` @${handle}`;
 		}
 	}
 	if (opts.renderCardLinks && card.shortLink) {
@@ -119,10 +127,41 @@ function renderCardLine(card: TrelloCard, opts: RenderOptions): string {
 	return line;
 }
 
+// Description/checklists are rendered into the same indented "extra content"
+// slot that a user's own multi-line notes under a card use (Kanban's own
+// multi-line-card-body convention), each line tagged with TRELLO_LINE_MARKER
+// so parseBoardMarkdown/twoWaySync can tell "regenerated from Trello every
+// cycle" apart from a hand-typed note, the former never opts a card out of
+// two-way sync, only the latter still does (see kanbanParser.ts).
+function renderCardBody(card: TrelloCard, opts: RenderOptions): string[] {
+	const lines: string[] = [];
+
+	if (opts.renderDescription && card.desc.trim()) {
+		for (const descLine of card.desc.replace(/\r\n/g, "\n").trim().split("\n")) {
+			if (descLine.trim().length === 0) continue;
+			lines.push(`\t${descLine} ${TRELLO_LINE_MARKER}`);
+		}
+	}
+
+	if (opts.renderChecklists) {
+		for (const checklist of card.checklists) {
+			for (const item of checklist.checkItems) {
+				const box = item.state === "complete" ? "x" : " ";
+				lines.push(`\t- [${box}] ${item.name} ${trelloChecklistItemMarker(item.id)}`);
+			}
+		}
+	}
+
+	return lines;
+}
+
 export interface RenderOptions {
 	renderDueDates: boolean;
 	renderLabelsAsTags: boolean;
 	renderCardLinks: boolean;
+	renderMembers: boolean;
+	renderDescription: boolean;
+	renderChecklists: boolean;
 }
 
 export function renderBoardMarkdown(
@@ -139,8 +178,14 @@ export function renderBoardMarkdown(
 		parts.push("");
 		for (const card of lane.cards) {
 			parts.push(renderCardLine(card, opts));
-			const extra = extraContentByCardId.get(card.id);
-			if (extra) {
+			// Trello-owned body first, then whatever hand-typed extra content was
+			// preserved from the last local file (already filtered down to just
+			// the user's own lines, see extraContentMap in twoWaySync.ts), so
+			// neither one clobbers the other.
+			const remoteBody = renderCardBody(card, opts);
+			const preservedUserLines = extraContentByCardId.get(card.id) ?? [];
+			const extra = [...remoteBody, ...preservedUserLines];
+			if (extra.length > 0) {
 				parts.push(...extra);
 			}
 		}
